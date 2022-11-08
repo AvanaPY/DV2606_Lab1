@@ -10,7 +10,8 @@
 #include <stdatomic.h>
 
 #define MAX_SIZE 4096
-#define MAX_THREADS 16
+#define MAX_THREADS 32
+
 
 typedef double matrix[MAX_SIZE][MAX_SIZE];
 
@@ -97,13 +98,13 @@ work(void)
 
         We iterate over each row, finding an available thread from our thread pool which to delegate the row to.
     */
+    int t = 0;
     for (int found_thread = 0, k = 0; k < N; k++) { /* Outer loop */
 	    // Delegate 
         found_thread = 0;
         while(found_thread == 0)
         {
-            for(int t = 0; t < MAX_THREADS; t++)
-            {
+            for(t = 0; t < MAX_THREADS; t++)
                 if(thread_finished[t] == 1)
                 {
                     // printf("Starting thread %d on row %d\n", t, k);
@@ -114,7 +115,7 @@ work(void)
                     found_thread = 1;
                     break;
                 }
-            }
+            // t = (t + 1) % MAX_THREADS;
         }
     }
 
