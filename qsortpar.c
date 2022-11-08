@@ -1,32 +1,25 @@
-/***************************************************************************
- *
- * Not-Sequential version of Quick sort
- *
- ***************************************************************************/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
 #include <stdatomic.h>
-#include <stdlib.h>
+
+#define KILO (1024)
+#define MEGA (64*1024)
+#define MAX_ITEMS (KILO*MEGA)
+#define swap(v, a, b) {unsigned tmp; tmp=v[a]; v[a]=v[b]; v[b]=tmp;}
+
+static int *v;
 
 typedef struct pthread_data_t {
     int *v;
     unsigned low, high;
     unsigned thread_id;
-    atomic_int available;
+    volatile atomic_int available;
+    volatile atomic_int mark_available;
 } pthread_data_t;
 
-
-#define MAX_THREADS 2
-
-#define KILO (1024)
-#define MEGA (1024*1024)
-#define MAX_ITEMS (64*MEGA)
-#define swap(v, a, b) {unsigned tmp; tmp=v[a]; v[a]=v[b]; v[b]=tmp;}
-
-static int *v;
-
+#define MAX_THREADS 16
+#define MIN_SUBARRAY_SORT_SIZE 4096 * 2
 pthread_t thread_pool[MAX_THREADS];
 pthread_data_t* pthread_data_pool;
 
@@ -59,7 +52,14 @@ init_pthread_data_pool(void)
     {
         pthread_data_pool[i].thread_id = i;
         pthread_data_pool[i].available = 1;
+        pthread_data_pool[i].mark_available = 1;
     }
+}
+
+static void
+mark_thread_available(unsigned thread_id)
+{
+    pthread_data_pool[thread_id].available = 1;
 }
 
 static unsigned
@@ -92,11 +92,13 @@ partition(int *v, unsigned low, unsigned high, unsigned pivot_index)
         swap(v, pivot_index, high);
     return high;
 }
+
+
 static void*
 thread_sort(void* ptargs)
 {
     pthread_data_t* t = (pthread_data_t*)ptargs;
-
+    int mark = t->mark_available;
     int *v = t->v;
     unsigned low = t->low, high = t->high;
     unsigned pivot_index;
@@ -106,25 +108,30 @@ thread_sort(void* ptargs)
 
     pivot_index = (low+high)/2;
     pivot_index = partition(v, low, high, pivot_index);
-    
+
     /* sort the two sub arrays */
     if (low < pivot_index)
     {
         int thread_id = start_thread_qsort(v, low, pivot_index-1); 
         if(thread_id == -1){
+            
+            t->available = 0;
             t->low = low;
             t->high = pivot_index-1;
+            t->mark_available = 0;
             thread_sort((void*)t);
         }
     }
     if (pivot_index < high)
     {
-        //int thread_id = start_thread_qsort(v, pivot_index+1, high); // TODO: Change so we continue this computation on this thread instead
         t->low = pivot_index+1;
         t->high = high;
+        t->mark_available = 0;
         thread_sort((void*)t);
     }
-    t->available = 1;
+    if(mark == 1)
+        mark_thread_available(t->thread_id);
+    return NULL;
 }
 /*
     Starts a thread to sort from low to high in the array v
@@ -132,6 +139,11 @@ thread_sort(void* ptargs)
 static int
 start_thread_qsort(int *v, unsigned low, unsigned high)
 {
+    // If the size of the subarray is smaller than a given size it is more efficient to instead simply continue to process the remaining
+    // subarrays on the remaining threads than to start up more threads as it introduces lots of overhead
+    if(high - low < MIN_SUBARRAY_SORT_SIZE)
+        return -1;
+
     int thread_id = -1;
     for(int i = 0; i < MAX_THREADS; i++)
     {
@@ -146,8 +158,7 @@ start_thread_qsort(int *v, unsigned low, unsigned high)
         t->v = v;
         t->low = low;
         t->high = high;
-        printf("Starting thread... %d\n", thread_id);
-        printf("    with data low=%d high=%d\n", t->low, t->high);
+        t->mark_available = 1;
 
         pthread_create(thread_pool + thread_id, NULL, thread_sort, (void*)(t));
     }
@@ -175,5 +186,5 @@ main(int argc, char **argv)
     init_pthread_data_pool();
     //print_array();
     quick_sort(v, 0, MAX_ITEMS-1);
-    //print_array();
+    // print_array();
 }

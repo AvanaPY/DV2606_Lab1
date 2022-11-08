@@ -6,11 +6,10 @@
 
 #include <stdio.h>
 #include <pthread.h>
-
 #include <stdatomic.h>
 
 #define MAX_SIZE 4096
-#define MAX_THREADS 32
+#define MAX_THREADS 16
 
 
 typedef double matrix[MAX_SIZE][MAX_SIZE];
