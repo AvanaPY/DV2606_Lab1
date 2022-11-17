@@ -43,7 +43,7 @@ typedef struct pthread_data {
 pthread_t *thread_pool;     // Our pool of threads to use
 pthread_barrier_t barrier;  // A barrier to synchronize threads with
 pthread_data* thread_data;          // Array to hold our thread indexes
-int thread_count = 8;      // Amount of threads to use
+int thread_count = 16;      // Amount of threads to use
 
 int main(int argc, char **argv)
 {
