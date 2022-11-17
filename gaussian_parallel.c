@@ -3,24 +3,24 @@
  * Sequential version of Gaussian elimination
  *
  ***************************************************************************/
-
+#include <stdlib.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <unistd.h>
+#include <math.h>
 
 #define MAX_SIZE 4096
-#define MAX_THREADS 16
-
-
+#define MIN(x,y) (x < y ? x : y)
 typedef double matrix[MAX_SIZE][MAX_SIZE];
 
-int	N;		/* matrix size		*/
-int	maxnum;		/* max number of element*/
-char	*Init;		/* matrix init type	*/
-int	PRINT;		/* print switch		*/
-matrix	A;		/* matrix A		*/
-double	b[MAX_SIZE];	/* vector b             */
-double	y[MAX_SIZE];	/* vector y             */
+int N;              /* matrix size		*/
+int maxnum;         /* max number of element*/
+char *Init;         /* matrix init type	*/
+int PRINT;          /* print switch		*/
+matrix A;           /* matrix A		*/
+double b[MAX_SIZE]; /* vector b             */
+double y[MAX_SIZE]; /* vector y             */
 
 /* forward declarations */
 void work(void);
@@ -29,102 +29,147 @@ void Print_Matrix(void);
 void Init_Default(void);
 int Read_Options(int, char **);
 
-int
-main(int argc, char **argv)
+/* Thread declarations */
+void* gaussian_elimination(void* args);
+void* back_substitution(void* args);
+void * normalize_row(void* args);
+
+typedef struct pthread_data {
+    int index;  // Thread index
+    int crow;   // Current working row
+} pthread_data;
+
+/* Global thread variables */
+pthread_t *thread_pool;     // Our pool of threads to use
+pthread_barrier_t barrier;  // A barrier to synchronize threads with
+pthread_data* thread_data;          // Array to hold our thread indexes
+int thread_count = 8;      // Amount of threads to use
+
+int main(int argc, char **argv)
 {
     int i, timestart, timeend, iter;
 
-    Init_Default();		/* Init default values	*/
-    Read_Options(argc,argv);	/* Read arguments	*/
-    Init_Matrix();		/* Init the matrix	*/
+    /*--------------------------------------------------------*/
+    /* ---------- Initiate thread pool and barrier ---------- */
+    thread_pool = (pthread_t*)malloc(sizeof(pthread_t)*thread_count);
+    pthread_barrier_init(&barrier, NULL, thread_count);
+
+    thread_data = (pthread_data*)malloc(sizeof(pthread_data)*thread_count);
+    for(int i = 0; i < thread_count; i++){
+        thread_data[i].index = i;
+    }
+    /*--------------------------------------------------------*/
+
+    Init_Default();           /* Init default values	*/
+    Read_Options(argc, argv); /* Read arguments	*/
+    Init_Matrix();            /* Init the matrix	*/
     work();
     if (PRINT == 1)
-	   Print_Matrix();
+        Print_Matrix();
 }
 
-typedef struct threadData {
-    int row;
-    atomic_int *finished;
-} threadData_t;
-
-/*
-    This function is meant to be called from a thread.
-
-    It does gaussian elimination on one row and takes in a threadData_t type as a parameter.
-    It then sets the finished flag inside the threadData_t type to 1 to indicate that the thread can
-    once again be used to compute another row. 
-*/
-void* myThreadFunction(void *ptargs)
+void *gaussian_elimination(void *args)
 {
-    threadData_t *td = (threadData_t*)ptargs;
-    int row = td->row;
+    pthread_data* data = (pthread_data*)args;
 
-    int k = row;
-    for (int j = k+1; j < N; j++)
-        A[k][j] = A[k][j] / A[k][k]; /* Division step */
-    y[k] = b[k] / A[k][k];
-    A[k][k] = 1.0;
-    for (int i = k+1; i < N; i++) {
-        for (int j = k+1; j < N; j++)
-            A[i][j] = A[i][j] - A[i][k]*A[k][j]; /* Elimination step */
-        b[i] = b[i] - A[i][k]*y[k];
-        A[i][k] = 0.0;
-    }
-    
-    *(td->finished) = 1;
-}
+    int i,j;                            /* Indices */
+    int thread_index = data->index;     
+    int l = data->crow;                 /* Current global working row */
+    int ncols = N - l;                  /* N - l lets us skip calculations below the diagonal */
 
-/*
-    In order to multi-thread the program, we settled on the simple solution of simply delegating
-    each row in the matrix to a thread which evaluates the gaussian elimination for said row.
-*/
-void
-work(void)
-{
-    pthread_t thread_pool[MAX_THREADS];
-    atomic_int thread_finished[MAX_THREADS];
-    threadData_t thread_data[N];
-
-    // Initialize data
-    for(int i = 0; i < MAX_THREADS; i++)
-        thread_finished[i] = 1;
-    for(int i = 0; i < N; i++)
-        thread_data[i].row = i;
-    
+    int start_col = l + 1 + thread_index * ncols / thread_count;            /* Which column this thread starts at*/
+    int end_col   = l + 1 + (thread_index + 1) * ncols / thread_count;  /* and ends at*/
+    float r;                                                            /* the division ratio we are working with */
 
     /* 
-        Delgating each row to a new thread.
-
-        We iterate over each row, finding an available thread from our thread pool which to delegate the row to.
+        Divide up all threads to work on different columns 
+        The way we calculate start_col and end_col guarantees 
+        that only one thread will work on one column at a time.
     */
-    int t = 0;
-    for (int found_thread = 0, k = 0; k < N; k++) { /* Outer loop */
-	    // Delegate 
-        found_thread = 0;
-        while(found_thread == 0)
+    for(i = start_col; i < end_col; i++)
+    {
+        r = A[i][l] / A[l][l];      /* Current cell divided by cell on diagonal */
+        for(j = l; j < N; j++)      /* For every row... */
         {
-            for(t = 0; t < MAX_THREADS; t++)
-                if(thread_finished[t] == 1)
-                {
-                    // printf("Starting thread %d on row %d\n", t, k);
-                    thread_finished[t] = 0;
-                    thread_data[k].finished = thread_finished + t;
+            A[i][j] = A[i][j] - r * A[l][j];    /* Elimination */
+        }
+        b[i] = b[i] - r * b[l]; 
+    }
 
-                    pthread_create(thread_pool + t, NULL, myThreadFunction, thread_data + k);
-                    found_thread = 1;
-                    break;
-                }
-            // t = (t + 1) % MAX_THREADS;
+    pthread_exit(0);                    /* Exit thread with code 0 */
+    pthread_barrier_wait(&barrier);     /* Sync threads */
+    return NULL;
+}
+
+void* normalize_row(void* args)
+{
+    pthread_data* data = (pthread_data*)args;
+    int i, j;
+    int thread_index = data->index;
+
+    int start = thread_index * N / thread_count;
+    int end   = (thread_index + 1) * N / thread_count;
+
+    for(i = start; i < end; i++)
+    {
+        for(j = N - 1; j >= i; j--)
+        {
+            A[i][j] = A[i][j] / A[i][i];
         }
     }
 
-    // Wait for all threads to complete before exiting
-    for(int i = 0; i < MAX_THREADS; i++)
-        pthread_join(thread_pool[i], NULL);
+    pthread_exit(0);                    /* Exit thread with code 0 */
+    pthread_barrier_wait(&barrier);     /* Sync threads */
+    return NULL;
 }
 
-void
-Init_Matrix()
+/*
+    
+*/
+void work(void)
+{
+    int l,k; // Indices
+    int s, ncols;   // pthread_create status
+
+    for(l = 0; l < N; l++)  /* Basic Gaussian Elimination loop */
+    {
+        ncols = N - l;
+        for(k = 0; k < thread_count; k++)
+        {
+            thread_data[k].crow = l;
+            s = pthread_create(&thread_pool[k], NULL, gaussian_elimination, (void*)&thread_data[k]);
+            if(s < 0){
+                printf("Failed to create thread, exiting.\n");
+                exit(1);
+            }
+        }
+        /* Wait for all threads to finish before moving on to the next row */
+        for(k = 0; k < thread_count; k++)
+			pthread_join(thread_pool[k], NULL);
+    }
+
+    // Evaluate Y
+    for(l = N - 1; l >= 0; l--)/* Evaluate Y */
+    {
+        y[l] = b[l] / A[l][l]; 
+    }
+
+    /* Normalize the remaining columns in A */
+    for(k = 0; k < thread_count; k++)
+    {
+        s = pthread_create(&thread_pool[k], NULL, normalize_row, (void*)&thread_data[k]);
+        if(s < 0){
+            printf("Failed to create thread, exiting.\n");
+            exit(1);
+        }
+    }
+    /* Wait for all threads to finish before moving on to the next row */
+    for(k = 0; k < thread_count; k++)
+        pthread_join(thread_pool[k],NULL);
+
+}
+
+void Init_Matrix()
 {
     int i, j;
 
@@ -133,9 +178,12 @@ Init_Matrix()
     printf("Init	  = %s \n", Init);
     printf("Initializing matrix...");
 
-    if (strcmp(Init,"rand") == 0) {
-        for (i = 0; i < N; i++){
-            for (j = 0; j < N; j++) {
+    if (strcmp(Init, "rand") == 0)
+    {
+        for (i = 0; i < N; i++)
+        {
+            for (j = 0; j < N; j++)
+            {
                 if (i == j) /* diagonal dominance */
                     A[i][j] = (double)(rand() % maxnum) + 5.0;
                 else
@@ -143,9 +191,12 @@ Init_Matrix()
             }
         }
     }
-    if (strcmp(Init,"fast") == 0) {
-        for (i = 0; i < N; i++) {
-            for (j = 0; j < N; j++) {
+    if (strcmp(Init, "fast") == 0)
+    {
+        for (i = 0; i < N; i++)
+        {
+            for (j = 0; j < N; j++)
+            {
                 if (i == j) /* diagonal dominance */
                     A[i][j] = 5.0;
                 else
@@ -155,7 +206,8 @@ Init_Matrix()
     }
 
     /* Initialize vectors b and y */
-    for (i = 0; i < N; i++) {
+    for (i = 0; i < N; i++)
+    {
         b[i] = 2.0;
         y[i] = 1.0;
     }
@@ -165,13 +217,13 @@ Init_Matrix()
         Print_Matrix();
 }
 
-void
-Print_Matrix()
+void Print_Matrix()
 {
     int i, j;
 
     printf("Matrix A:\n");
-    for (i = 0; i < N; i++) {
+    for (i = 0; i < N; i++)
+    {
         printf("[");
         for (j = 0; j < N; j++)
             printf(" %5.2f,", A[i][j]);
@@ -188,8 +240,7 @@ Print_Matrix()
     printf("\n\n");
 }
 
-void
-Init_Default()
+void Init_Default()
 {
     N = 2048;
     Init = "rand";
@@ -197,54 +248,54 @@ Init_Default()
     PRINT = 0;
 }
 
-int
-Read_Options(int argc, char **argv)
+int Read_Options(int argc, char **argv)
 {
-    char    *prog;
+    char *prog;
 
     prog = *argv;
     while (++argv, --argc > 0)
         if (**argv == '-')
-            switch ( *++*argv ) {
-                case 'n':
-                    --argc;
-                    N = atoi(*++argv);
-                    break;
-                case 'h':
-                    printf("\nHELP: try sor -u \n\n");
-                    exit(0);
-                    break;
-                case 'u':
-                    printf("\nUsage: gaussian [-n problemsize]\n");
-                    printf("           [-D] show default values \n");
-                    printf("           [-h] help \n");
-                    printf("           [-I init_type] fast/rand \n");
-                    printf("           [-m maxnum] max random no \n");
-                    printf("           [-P print_switch] 0/1 \n");
-                    exit(0);
-                    break;
-                case 'D':
-                    printf("\nDefault:  n         = %d ", N);
-                    printf("\n          Init      = rand" );
-                    printf("\n          maxnum    = 5 ");
-                    printf("\n          P         = 0 \n\n");
-                    exit(0);
-                    break;
-                case 'I':
-                    --argc;
-                    Init = *++argv;
-                    break;
-                case 'm':
-                    --argc;
-                    maxnum = atoi(*++argv);
-                    break;
-                case 'P':
-                    --argc;
-                    PRINT = atoi(*++argv);
-                    break;
-                default:
-                    printf("%s: ignored option: -%s\n", prog, *argv);
-                    printf("HELP: try %s -u \n\n", prog);
-                    break;
+            switch (*++*argv)
+            {
+            case 'n':
+                --argc;
+                N = atoi(*++argv);
+                break;
+            case 'h':
+                printf("\nHELP: try sor -u \n\n");
+                exit(0);
+                break;
+            case 'u':
+                printf("\nUsage: gaussian [-n problemsize]\n");
+                printf("           [-D] show default values \n");
+                printf("           [-h] help \n");
+                printf("           [-I init_type] fast/rand \n");
+                printf("           [-m maxnum] max random no \n");
+                printf("           [-P print_switch] 0/1 \n");
+                exit(0);
+                break;
+            case 'D':
+                printf("\nDefault:  n         = %d ", N);
+                printf("\n          Init      = rand");
+                printf("\n          maxnum    = 5 ");
+                printf("\n          P         = 0 \n\n");
+                exit(0);
+                break;
+            case 'I':
+                --argc;
+                Init = *++argv;
+                break;
+            case 'm':
+                --argc;
+                maxnum = atoi(*++argv);
+                break;
+            case 'P':
+                --argc;
+                PRINT = atoi(*++argv);
+                break;
+            default:
+                printf("%s: ignored option: -%s\n", prog, *argv);
+                printf("HELP: try %s -u \n\n", prog);
+                break;
             }
 }

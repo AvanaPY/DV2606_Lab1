@@ -4,8 +4,8 @@
 #include <stdatomic.h>
 
 #define KILO (1024)
-#define MEGA (64*1024)
-#define MAX_ITEMS (KILO*MEGA)
+#define MEGA (1024*1024)
+#define MAX_ITEMS (64*MEGA)
 #define swap(v, a, b) {unsigned tmp; tmp=v[a]; v[a]=v[b]; v[b]=tmp;}
 
 static int *v;
@@ -19,12 +19,11 @@ typedef struct pthread_data_t {
 } pthread_data_t;
 
 #define MAX_THREADS 16
-#define MIN_SUBARRAY_SORT_SIZE 4096 * 2
+#define MIN_SUBARRAY_SORT_SIZE 1024 * 4
 pthread_t thread_pool[MAX_THREADS];
 pthread_data_t* pthread_data_pool;
 
-static int
-start_thread_qsort(int *v, unsigned low, unsigned high);
+static int start_thread_qsort(int *v, unsigned low, unsigned high, int force);
 
 static void
 print_array(void)
@@ -41,7 +40,7 @@ init_array(void)
     int i;
     v = (int *) malloc(MAX_ITEMS*sizeof(int));
     for (i = 0; i < MAX_ITEMS; i++)
-        v[i] = rand();
+        v[i] = rand() % MAX_ITEMS;
 }
 
 static void 
@@ -59,6 +58,7 @@ init_pthread_data_pool(void)
 static void
 mark_thread_available(unsigned thread_id)
 {
+    printf("Marked %d as available\n", thread_id);
     pthread_data_pool[thread_id].available = 1;
 }
 
@@ -112,7 +112,7 @@ thread_sort(void* ptargs)
     /* sort the two sub arrays */
     if (low < pivot_index)
     {
-        int thread_id = start_thread_qsort(v, low, pivot_index-1); 
+        int thread_id = start_thread_qsort(v, low, pivot_index-1, 0); 
         if(thread_id == -1){
             
             t->available = 0;
@@ -137,12 +137,13 @@ thread_sort(void* ptargs)
     Starts a thread to sort from low to high in the array v
 */
 static int
-start_thread_qsort(int *v, unsigned low, unsigned high)
+start_thread_qsort(int *v, unsigned low, unsigned high, int force)
 {
     // If the size of the subarray is smaller than a given size it is more efficient to instead simply continue to process the remaining
     // subarrays on the remaining threads than to start up more threads as it introduces lots of overhead
-    if(high - low < MIN_SUBARRAY_SORT_SIZE)
+    if(force == 0 && high - low < MIN_SUBARRAY_SORT_SIZE){
         return -1;
+    }
 
     int thread_id = -1;
     for(int i = 0; i < MAX_THREADS; i++)
@@ -171,12 +172,18 @@ quick_sort(int *v, unsigned low, unsigned high)
     // Init thread pool
 
     // Start first thread
-    start_thread_qsort(v, low, high);
+    start_thread_qsort(v, low, high, 1);
 
     // Suck
 
-    for(int i = 0; i < MAX_THREADS; i++)
-        pthread_join(thread_pool[i], NULL);
+    // Wait for all threads to be done working
+    int finished = 0;
+    while(finished == 0) {
+        finished = 1;
+        for(int i = 0; i < MAX_THREADS; i++)
+            finished &= pthread_data_pool[i].available;
+    }
+    // TODO: There is very bad bug, see github
 }
 
 int
@@ -186,5 +193,5 @@ main(int argc, char **argv)
     init_pthread_data_pool();
     //print_array();
     quick_sort(v, 0, MAX_ITEMS-1);
-    // print_array();
+    //print_array();
 }
