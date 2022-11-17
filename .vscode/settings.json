@@ -1,9 +1,0 @@
-{
-    "files.associations": {
-        "*.rmd": "markdown",
-        "stdatomic.h": "c",
-        "stdio.h": "c",
-        "pthread.h": "c"
-    },
-    "C_Cpp.errorSquiggles": "disabled"
-}
