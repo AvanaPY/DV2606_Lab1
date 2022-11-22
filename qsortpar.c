@@ -58,7 +58,6 @@ init_pthread_data_pool(void)
 static void
 mark_thread_available(unsigned thread_id)
 {
-    printf("Marked %d as available\n", thread_id);
     pthread_data_pool[thread_id].available = 1;
 }
 
@@ -193,5 +192,5 @@ main(int argc, char **argv)
     init_pthread_data_pool();
     //print_array();
     quick_sort(v, 0, MAX_ITEMS-1);
-    //print_array();
+    // print_array();
 }
