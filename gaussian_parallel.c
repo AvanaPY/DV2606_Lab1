@@ -9,6 +9,7 @@
 #include <stdatomic.h>
 #include <unistd.h>
 #include <math.h>
+#include <time.h>
 
 #define MAX_SIZE 4096
 #define MIN(x,y) (x < y ? x : y)
@@ -32,18 +33,13 @@ int Read_Options(int, char **);
 /* Thread declarations */
 void* gaussian_elimination(void* args);
 void* back_substitution(void* args);
-void * normalize_row(void* args);
-
-typedef struct pthread_data {
-    int index;  // Thread index
-    int crow;   // Current working row
-} pthread_data;
+void* normalize_row(void* args);
 
 /* Global thread variables */
 pthread_t *thread_pool;     // Our pool of threads to use
 pthread_barrier_t barrier;  // A barrier to synchronize threads with
-pthread_data* thread_data;          // Array to hold our thread indexes
-int thread_count = 16;      // Amount of threads to use
+const int thread_count = 8;      // Amount of threads to use
+int* thread_id;
 
 int main(int argc, char **argv)
 {
@@ -54,10 +50,10 @@ int main(int argc, char **argv)
     thread_pool = (pthread_t*)malloc(sizeof(pthread_t)*thread_count);
     pthread_barrier_init(&barrier, NULL, thread_count);
 
-    thread_data = (pthread_data*)malloc(sizeof(pthread_data)*thread_count);
-    for(int i = 0; i < thread_count; i++){
-        thread_data[i].index = i;
-    }
+    thread_id = (int*)malloc(sizeof(int) * thread_count);
+    for(int i = 0; i < thread_count; i++)
+        thread_id[i] = i;
+
     /*--------------------------------------------------------*/
 
     Init_Default();           /* Init default values	*/
@@ -66,46 +62,51 @@ int main(int argc, char **argv)
     work();
     if (PRINT == 1)
         Print_Matrix();
+
+    /* Free stuff */
+    free(thread_pool);
+    free(thread_id);
 }
 
 void *gaussian_elimination(void *args)
 {
-    pthread_data* data = (pthread_data*)args;
+    int i,j,l;                            /* Indices */
+    int thread_index = *(int*)args;     
+    int ncols;                  /* N - l lets us skip calculations below the diagonal */
 
-    int i,j;                            /* Indices */
-    int thread_index = data->index;     
-    int l = data->crow;                 /* Current global working row */
-    int ncols = N - l;                  /* N - l lets us skip calculations below the diagonal */
-
-    int start_col = l + 1 + thread_index * ncols / thread_count;            /* Which column this thread starts at*/
-    int end_col   = l + 1 + (thread_index + 1) * ncols / thread_count;  /* and ends at*/
+    int start, end; /* and ends at*/
     float r;                                                            /* the division ratio we are working with */
 
     /* 
         Divide up all threads to work on different columns 
-        The way we calculate start_col and end_col guarantees 
+        The way we calculate start and end guarantees 
         that only one thread will work on one column at a time.
     */
-    for(i = start_col; i < end_col; i++)
-    {
-        r = A[i][l] / A[l][l];      /* Current cell divided by cell on diagonal */
-        for(j = l; j < N; j++)      /* For every row... */
+    for(l = 0; l < N; l++)
+    { 
+        ncols = N - l;
+        start = l + 1 + thread_index * ncols / thread_count;            /* Which column this thread starts at*/
+        end = l + 1 + (thread_index + 1) * ncols / thread_count;  
+        for(i = start; i < end; i++)
         {
-            A[i][j] = A[i][j] - r * A[l][j];    /* Elimination */
+            r = A[i][l] / A[l][l];      /* Current cell divided by cell on diagonal */
+            for(j = l; j < N; j++)      /* For every row... */
+            {
+                A[i][j] -= r * A[l][j];    /* Elimination */
+            }
+            b[i] -=r * b[l]; 
         }
-        b[i] = b[i] - r * b[l]; 
-    }
 
+        pthread_barrier_wait(&barrier);     /* Sync threads */
+    }
     pthread_exit(0);                    /* Exit thread with code 0 */
-    pthread_barrier_wait(&barrier);     /* Sync threads */
     return NULL;
 }
 
 void* normalize_row(void* args)
 {
-    pthread_data* data = (pthread_data*)args;
     int i, j;
-    int thread_index = data->index;
+    int thread_index = *(int*)args;;
 
     int start = thread_index * N / thread_count;
     int end   = (thread_index + 1) * N / thread_count;
@@ -131,22 +132,14 @@ void work(void)
     int l,k; // Indices
     int s, ncols;   // pthread_create status
 
-    for(l = 0; l < N; l++)  /* Basic Gaussian Elimination loop */
-    {
-        ncols = N - l;
-        for(k = 0; k < thread_count; k++)
-        {
-            thread_data[k].crow = l;
-            s = pthread_create(&thread_pool[k], NULL, gaussian_elimination, (void*)&thread_data[k]);
-            if(s < 0){
-                printf("Failed to create thread, exiting.\n");
-                exit(1);
-            }
-        }
-        /* Wait for all threads to finish before moving on to the next row */
-        for(k = 0; k < thread_count; k++)
-			pthread_join(thread_pool[k], NULL);
-    }
+    clock_t start;
+    clock_t end;
+    double time;
+    for(k = 0; k < thread_count; k++)
+        pthread_create(&thread_pool[k], NULL, gaussian_elimination, (void*)&thread_id[k]);
+
+    for(k = 0; k < thread_count; k++)
+        pthread_join(thread_pool[k], NULL);
 
     // Evaluate Y
     for(l = N - 1; l >= 0; l--)/* Evaluate Y */
@@ -156,14 +149,8 @@ void work(void)
 
     /* Normalize the remaining columns in A */
     for(k = 0; k < thread_count; k++)
-    {
-        s = pthread_create(&thread_pool[k], NULL, normalize_row, (void*)&thread_data[k]);
-        if(s < 0){
-            printf("Failed to create thread, exiting.\n");
-            exit(1);
-        }
-    }
-    /* Wait for all threads to finish before moving on to the next row */
+        pthread_create(&thread_pool[k], NULL, normalize_row, (void*)&thread_id[k]);
+    
     for(k = 0; k < thread_count; k++)
         pthread_join(thread_pool[k],NULL);
 
