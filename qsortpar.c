@@ -197,8 +197,6 @@ quick_sort(int *v, unsigned low, unsigned high)
         }
     }
 
-    printf("Exited main loop\n");
-
     for(int i = 0; i < MAX_THREADS; i++)
         pthread_data_pool[i].alive = 0;
 
