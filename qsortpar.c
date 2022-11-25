@@ -1,3 +1,14 @@
+/***************************************************************************
+ *
+ *  Parallel version of quick sort
+ *  Written by Emil Karlström &
+               Samuel Jonsson
+
+            Blekinge Institute of Technology
+            DVAMI19h
+            DV2606
+ *
+ ***************************************************************************/
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>

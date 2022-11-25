@@ -1,6 +1,12 @@
 /***************************************************************************
  *
- * Sequential version of Gaussian elimination
+ *  Parallel version of Gaussian elimination
+ *  Written by Emil Karlström &
+               Samuel Jonsson
+
+            Blekinge Institute of Technology
+            DVAMI19h
+            DV2606
  *
  ***************************************************************************/
 #include <stdlib.h>
