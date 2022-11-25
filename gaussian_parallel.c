@@ -93,6 +93,7 @@ void *gaussian_elimination(void *args)
                 A[i][j] -= r * A[l][j];    /* Elimination */
             }
             b[i] -= r * b[l]; 
+            A[i][l] = 0;
         }
 
         pthread_barrier_wait(&barrier);     /* Sync threads */
