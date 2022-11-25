@@ -75,28 +75,25 @@ void *gaussian_elimination(void *args)
     int num, start, end;                /* Start and ends at*/
     float r;                              /* the division ratio we are working with */
 
-    /* 
-        Divide up all threads to work on different columns 
-        The way we calculate start and end guarantees 
-        that only one thread will work on one column at a time.
-    */
     for(l = 0; l < N; l++)
     { 
         num = N - l;
         start = l + 1 + thread_index * num / thread_count;
         end = l + 1 + (thread_index + 1) * num / thread_count;  
+        /* This delegates all the rows as evenly as possible among the threads */
         for(i = start; i < end; i++)
         {
-            r = A[i][l] / A[l][l];      /* Current cell divided by cell on diagonal */
-            for(j = l; j < N; j++)      /* For every column... */
+            r = A[i][l] / A[l][l];          /* Current cell divided by cell on diagonal */
+            for(j = l + 1; j < N; j++)      /* For every column... */
             {
-                A[i][j] -= r * A[l][j];    /* Elimination */
+                A[i][j] -= r * A[l][j];     /* Elimination */
             }
             b[i] -= r * b[l]; 
             A[i][l] = 0;
         }
 
-        pthread_barrier_wait(&barrier);     /* Sync threads */
+        pthread_barrier_wait(&barrier);     /* Because every thread uses its own loop for the pivot cell
+                                               we will use a barrier to synchronize those loops*/
     }
     pthread_exit(0);                    /* Exit thread with code 0 */
     return NULL;
@@ -128,12 +125,7 @@ void* normalize_row(void* args)
 */
 void work(void)
 {
-    int l,k; // Indices
-    int s, ncols;   // pthread_create status
-
-    clock_t start;
-    clock_t end;
-    double time;
+    /* Start the gaussian elimination process on each thread */ 
     for(k = 0; k < thread_count; k++)
         pthread_create(&thread_pool[k], NULL, gaussian_elimination, (void*)&thread_id[k]);
 
@@ -141,12 +133,10 @@ void work(void)
         pthread_join(thread_pool[k], NULL);
 
     // Evaluate Y
-    for(l = 0; l < N; l++)/* Evaluate Y */
-    {
-        y[l] = b[l] / A[l][l]; 
-    }
+    for(l = 0; l < N; l++)/* Evaluate Y vector*/
+        y[l] = b[l] / A[l][l];
 
-    /* Normalize the remaining columns in A */
+    /* Update the matrix A with the normalized rows */
     for(k = 0; k < thread_count; k++)
         pthread_create(&thread_pool[k], NULL, normalize_row, (void*)&thread_id[k]);
     
