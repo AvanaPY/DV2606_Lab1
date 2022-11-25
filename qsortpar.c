@@ -15,15 +15,52 @@ typedef struct pthread_data_t {
     unsigned low, high;
     unsigned thread_id;
     volatile atomic_int available;
-    volatile atomic_int mark_available;
+    volatile atomic_int alive;
 } pthread_data_t;
 
+typedef struct sort_data {
+    int low, high;
+} sort_data_t;
+
+const int queue_len = 1024; /* 1024 items **should** be enough */
+sort_data_t* queue; 
+int queue_start_index = 0;
+int queue_end_index = 0;
+pthread_mutex_t mut_enqueue, mut_dequeue;
+
 #define MAX_THREADS 16
-#define MIN_SUBARRAY_SORT_SIZE 1024 * 4
 pthread_t thread_pool[MAX_THREADS];
 pthread_data_t* pthread_data_pool;
 
-static int start_thread_qsort(int *v, unsigned low, unsigned high, int force);
+/* Queue api */
+void
+enqueue(int low, int high)
+{
+    pthread_mutex_lock(&mut_enqueue);
+    queue[queue_end_index].low = low;
+    queue[queue_end_index].high = high;
+    queue_end_index = (queue_end_index + 1) % queue_len;
+    pthread_mutex_unlock(&mut_enqueue);
+}
+
+sort_data_t*
+dequeue()
+{
+    pthread_mutex_lock(&mut_dequeue);
+    int r = queue_start_index;
+    queue_start_index = (queue_start_index + 1) % queue_len;
+    pthread_mutex_unlock(&mut_dequeue);
+    return queue + r;
+}
+
+int 
+queue_length()
+{
+    if(queue_start_index <= queue_end_index){
+        return queue_end_index - queue_start_index;
+    }
+    return queue_len - (queue_start_index - queue_end_index);
+}
 
 static void
 print_array(void)
@@ -41,18 +78,6 @@ init_array(void)
     v = (int *) malloc(MAX_ITEMS*sizeof(int));
     for (i = 0; i < MAX_ITEMS; i++)
         v[i] = rand() % MAX_ITEMS;
-}
-
-static void 
-init_pthread_data_pool(void)
-{
-    pthread_data_pool = (pthread_data_t*)malloc(MAX_THREADS*sizeof(pthread_data_t));
-    for(int i = 0; i < MAX_THREADS; i++)
-    {
-        pthread_data_pool[i].thread_id = i;
-        pthread_data_pool[i].available = 1;
-        pthread_data_pool[i].mark_available = 1;
-    }
 }
 
 static void
@@ -92,96 +117,98 @@ partition(int *v, unsigned low, unsigned high, unsigned pivot_index)
     return high;
 }
 
-
 static void*
 thread_sort(void* ptargs)
 {
     pthread_data_t* t = (pthread_data_t*)ptargs;
-    int mark = t->mark_available;
     int *v = t->v;
-    unsigned low = t->low, high = t->high;
-    unsigned pivot_index;
+    unsigned low, high, pivot_index;
 
-    if(low >= high)
-        return NULL;
-
-    pivot_index = (low+high)/2;
-    pivot_index = partition(v, low, high, pivot_index);
-
-    /* sort the two sub arrays */
-    if (low < pivot_index)
+    while(t->alive == 1)
     {
-        int thread_id = start_thread_qsort(v, low, pivot_index-1, 0); 
-        if(thread_id == -1){
-            
-            t->available = 0;
-            t->low = low;
-            t->high = pivot_index-1;
-            t->mark_available = 0;
-            thread_sort((void*)t);
+        if(t->available == 1)
+            continue;
+        if(low >= high)
+            return NULL;
+
+        low = t->low;
+        high = t->high;
+
+        pivot_index = (low+high)/2;
+        pivot_index = partition(v, low, high, pivot_index);
+
+        /* sort the two sub arrays */
+        if (low < pivot_index - 1)
+        {
+            enqueue(low, pivot_index - 1);
         }
+        if (pivot_index + 1 < high)
+        {
+            enqueue(pivot_index+1, high);
+        }
+        t->available = 1;
     }
-    if (pivot_index < high)
-    {
-        t->low = pivot_index+1;
-        t->high = high;
-        t->mark_available = 0;
-        thread_sort((void*)t);
-    }
-    if(mark == 1)
-        mark_thread_available(t->thread_id);
     return NULL;
-}
-/*
-    Starts a thread to sort from low to high in the array v
-*/
-static int
-start_thread_qsort(int *v, unsigned low, unsigned high, int force)
-{
-    // If the size of the subarray is smaller than a given size it is more efficient to instead simply continue to process the remaining
-    // subarrays on the remaining threads than to start up more threads as it introduces lots of overhead
-    if(force == 0 && high - low < MIN_SUBARRAY_SORT_SIZE){
-        return -1;
-    }
-
-    int thread_id = -1;
-    for(int i = 0; i < MAX_THREADS; i++)
-    {
-        if(pthread_data_pool[i].available == 1){
-            thread_id = i;
-            break;
-        }
-    }
-    if(thread_id != -1){
-        pthread_data_t *t = pthread_data_pool + thread_id;
-        t->available = 0;
-        t->v = v;
-        t->low = low;
-        t->high = high;
-        t->mark_available = 1;
-
-        pthread_create(thread_pool + thread_id, NULL, thread_sort, (void*)(t));
-    }
-    return thread_id;
 }
 
 static void
 quick_sort(int *v, unsigned low, unsigned high)
 {
     // Init thread pool
+    pthread_data_pool = (pthread_data_t*)malloc(MAX_THREADS*sizeof(pthread_data_t));
+    for(int i = 0; i < MAX_THREADS; i++)
+    {
+        pthread_data_pool[i].v = v;
+        pthread_data_pool[i].thread_id = i;
+        pthread_data_pool[i].available = 1;
+        pthread_data_pool[i].alive = 1;
+        pthread_create(&thread_pool[i], NULL, thread_sort, (void*)&pthread_data_pool[i]);
+    }
+
+    // Initialise queue
+    queue = (sort_data_t*)malloc(sizeof(sort_data_t) * queue_len);
+    pthread_mutex_init(&mut_enqueue, NULL);
+    pthread_mutex_init(&mut_dequeue, NULL);
+    enqueue(low, high);
 
     // Start first thread
-    start_thread_qsort(v, low, high, 1);
+    int working = 1; // Variable to indicate whether or not the program is still working
+    while(working == 1)
+    {
+        working = 0;
+        if(queue_length() > 0)
+        {
+            working = 1;
+
+            for(int i = 0; i < MAX_THREADS; i++)
+            {
+                if(pthread_data_pool[i].available == 1)
+                {
+                    sort_data_t* d = dequeue();
+                    pthread_data_pool[i].low = d->low;
+                    pthread_data_pool[i].high = d->high;
+                    pthread_data_pool[i].available = 0;
+                    break;
+                }
+            }
+        }
+        for(int i = 0; i < MAX_THREADS; i++)
+        {
+            if(pthread_data_pool[i].available == 0)
+                working = 1;
+        }
+    }
+
+    printf("Exited main loop\n");
+
+    for(int i = 0; i < MAX_THREADS; i++)
+        pthread_data_pool[i].alive = 0;
 
     // Suck
 
     // Wait for all threads to be done working
-    int finished = 0;
-    while(finished == 0) {
-        finished = 1;
-        for(int i = 0; i < MAX_THREADS; i++)
-            finished &= pthread_data_pool[i].available;
-    }
+    for(int i = 0; i < MAX_THREADS; i++)
+        pthread_join(thread_pool[i], NULL);
     // TODO: There is very bad bug, see github
 }
 
@@ -189,8 +216,7 @@ int
 main(int argc, char **argv)
 {
     init_array();
-    init_pthread_data_pool();
-    //print_array();
+    // print_array();
     quick_sort(v, 0, MAX_ITEMS-1);
     // print_array();
 }

@@ -38,7 +38,7 @@ void* normalize_row(void* args);
 /* Global thread variables */
 pthread_t *thread_pool;     // Our pool of threads to use
 pthread_barrier_t barrier;  // A barrier to synchronize threads with
-const int thread_count = 8;      // Amount of threads to use
+const int thread_count = 16;      // Amount of threads to use
 int* thread_id;
 
 int main(int argc, char **argv)
@@ -72,10 +72,8 @@ void *gaussian_elimination(void *args)
 {
     int i,j,l;                            /* Indices */
     int thread_index = *(int*)args;     
-    int ncols;                  /* N - l lets us skip calculations below the diagonal */
-
-    int start, end; /* and ends at*/
-    float r;                                                            /* the division ratio we are working with */
+    int num, start, end;                /* Start and ends at*/
+    float r;                              /* the division ratio we are working with */
 
     /* 
         Divide up all threads to work on different columns 
@@ -84,17 +82,17 @@ void *gaussian_elimination(void *args)
     */
     for(l = 0; l < N; l++)
     { 
-        ncols = N - l;
-        start = l + 1 + thread_index * ncols / thread_count;            /* Which column this thread starts at*/
-        end = l + 1 + (thread_index + 1) * ncols / thread_count;  
+        num = N - l;
+        start = l + 1 + thread_index * num / thread_count;
+        end = l + 1 + (thread_index + 1) * num / thread_count;  
         for(i = start; i < end; i++)
         {
             r = A[i][l] / A[l][l];      /* Current cell divided by cell on diagonal */
-            for(j = l; j < N; j++)      /* For every row... */
+            for(j = l; j < N; j++)      /* For every column... */
             {
                 A[i][j] -= r * A[l][j];    /* Elimination */
             }
-            b[i] -=r * b[l]; 
+            b[i] -= r * b[l]; 
         }
 
         pthread_barrier_wait(&barrier);     /* Sync threads */
@@ -142,7 +140,7 @@ void work(void)
         pthread_join(thread_pool[k], NULL);
 
     // Evaluate Y
-    for(l = N - 1; l >= 0; l--)/* Evaluate Y */
+    for(l = 0; l < N; l++)/* Evaluate Y */
     {
         y[l] = b[l] / A[l][l]; 
     }
