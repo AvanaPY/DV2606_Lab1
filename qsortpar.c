@@ -139,13 +139,11 @@ thread_sort(void* ptargs)
 
         /* sort the two sub arrays */
         if (low < pivot_index - 1)
-        {
             enqueue(low, pivot_index - 1);
-        }
+
         if (pivot_index + 1 < high)
-        {
             enqueue(pivot_index+1, high);
-        }
+
         t->available = 1;
     }
     return NULL;
@@ -204,12 +202,13 @@ quick_sort(int *v, unsigned low, unsigned high)
     for(int i = 0; i < MAX_THREADS; i++)
         pthread_data_pool[i].alive = 0;
 
-    // Suck
-
     // Wait for all threads to be done working
     for(int i = 0; i < MAX_THREADS; i++)
         pthread_join(thread_pool[i], NULL);
-    // TODO: There is very bad bug, see github
+
+    // Free any allocated memory
+    free(pthread_data_pool);
+    free(queue);
 }
 
 int
