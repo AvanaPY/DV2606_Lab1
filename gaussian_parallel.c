@@ -83,11 +83,9 @@ void *gaussian_elimination(void *args)
         /* This delegates all the rows as evenly as possible among the threads */
         for(i = start; i < end; i++)
         {
-            r = A[i][l] / A[l][l];          /* Current cell divided by cell on diagonal */
+            r = A[i][l] / A[l][l];          /* Division ratio between pivot and row to eliminate from  */
             for(j = l + 1; j < N; j++)      /* For every column... */
-            {
                 A[i][j] -= r * A[l][j];     /* Elimination */
-            }
             b[i] -= r * b[l]; 
             A[i][l] = 0;
         }
@@ -108,12 +106,8 @@ void* normalize_row(void* args)
     int end   = (thread_index + 1) * N / thread_count;
 
     for(i = start; i < end; i++)
-    {
         for(j = N - 1; j >= i; j--)
-        {
             A[i][j] = A[i][j] / A[i][i];
-        }
-    }
 
     pthread_exit(0);                    /* Exit thread with code 0 */
     pthread_barrier_wait(&barrier);     /* Sync threads */
@@ -125,6 +119,7 @@ void* normalize_row(void* args)
 */
 void work(void)
 {
+    int k,l;
     /* Start the gaussian elimination process on each thread */ 
     for(k = 0; k < thread_count; k++)
         pthread_create(&thread_pool[k], NULL, gaussian_elimination, (void*)&thread_id[k]);
@@ -142,7 +137,6 @@ void work(void)
     
     for(k = 0; k < thread_count; k++)
         pthread_join(thread_pool[k],NULL);
-
 }
 
 void Init_Matrix()
