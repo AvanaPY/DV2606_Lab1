@@ -39,3 +39,13 @@ clean:
 	rm -f $(seq_gaus_exe) $(seq_gaus_objs)
 	rm -f $(qsortseq_exe) $(qsortseq_objs)
 	rm -f $(qsortpar_exe) $(qsortpar_objs)
+
+zip:
+	@rm -rf ./assignment
+	@mkdir assignment
+	@cp qsortpar.c gaussian_parallel.c Makefile readme.md ./assignment
+	@zip assignment.zip assignment/*
+	@rm -rf ./assignment
+
+unzip: zip
+	@unzip assignment.zip

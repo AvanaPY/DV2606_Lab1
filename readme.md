@@ -6,6 +6,10 @@
 
 `make clean` to clean the directory
 
+`make zip` to zip all the relevant files into a zip file.
+
+`make unzip` to unzip the zip file generated from `make zip`. Mainly used to verify that the files in the zip file are the correct ones.
+
 # Executables
 
 `gaussian_sequential.a` is the sequential version of the gaussian elimination, equivalent to the one given to us in the assignment.
